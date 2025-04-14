@@ -1,0 +1,1 @@
+sqlx migrate run --database-url postgres://postgres:phani@localhost:5432/database-name
