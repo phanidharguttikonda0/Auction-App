@@ -5,10 +5,15 @@ use crate::middlewares::authentication_middleware::validate_username ;
 
 #[derive(sqlx::FromRow,Serialize, Deserialize, Debug, Validate)]
 pub struct Authentication {
-	#[validate(email)]
-	pub mail_id: String,
+	pub username: String,
 	#[validate(length(min=8, message="min 8 characters should contain"))]
 	pub password: String
+}
+
+#[derive(sqlx::FromRow,Serialize, Deserialize, Debug, Validate)]
+pub struct Details {
+	pub username: String, 
+	pub id: i32,
 }
 
 
@@ -40,11 +45,12 @@ impl Authorization {
 
 #[derive(Deserialize,Serialize)]
 pub struct Claims {
-	pub mail_id: String,
+	pub username: String,
+	pub userId: i32
 }
 
 impl Claims {
-	pub fn new(mail_id: String) -> Claims {
-		Claims { mail_id }
+	pub fn new(username: String,userId: i32) -> Claims {
+		Claims { username, userId }
 	}
 }

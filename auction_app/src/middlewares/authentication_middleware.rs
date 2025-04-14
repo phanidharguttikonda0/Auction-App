@@ -5,21 +5,22 @@ use validator::ValidationError;
 
 use crate::models::authentication_models::Claims;
 
-fn authorization_header_check(header: &str) -> bool {
+pub fn authorization_header_check(header: &str) -> (bool, Claims) {
 	println!("header came for checking {}", header) ;
 	let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = false;
     validation.required_spec_claims.remove("exp");
 	let result = decode::<Claims>(header, &DecodingKey::from_secret("secret".as_ref()), &validation);
 	match result {
-	    Ok(_) => {
+	    Ok(val) => {
 	    	println!("success");
-	    	true
+
+	    	(true,val.claims)
 	    },
 	    Err(err) => {
 	    	println!("{}", err);
 	    	println!("failed");
-	    	false
+	    	(false, Claims::new(String::from(""), -1))
 	    },
 	}
 }
@@ -35,15 +36,15 @@ pub fn validate_username(username: &str) -> Result<(), ValidationError> {
 	Ok(())
 }
 
-pub fn generate_authorization_header(mail_id: String) -> String {
-	encode(&Header::default(), &Claims::new(mail_id), &EncodingKey::from_secret("secret".as_ref())).unwrap()
+pub fn generate_authorization_header(username: String, user_id: i32) -> String {
+	encode(&Header::default(), &Claims::new(username,user_id), &EncodingKey::from_secret("secret".as_ref())).unwrap()
 }
 
 
 pub async fn authorization_check(req: Request, next: Next) -> Result<Response, StatusCode>{
 	
 	let header = req.headers().get("authorization").unwrap().to_str().unwrap() ;
-	if authorization_header_check(header){
+	if authorization_header_check(header).0{
 		Ok(next.run(req).await)
 	}else{
 		Err(StatusCode::UNAUTHORIZED)

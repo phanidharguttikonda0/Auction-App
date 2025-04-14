@@ -1,5 +1,7 @@
 
 
+use std::sync::Arc;
+
 use axum::{middleware, routing::{get, post},  Router };
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 mod handlers;
@@ -7,7 +9,7 @@ use handlers::{authentication_handlers::*, rooms_handler::*};
 mod models;
 mod middlewares;
 use middlewares::{authentication_middleware::*};
-
+use middlewares::rooms_middleware::active_room_checks;
 async fn home() -> String{
     String::from("true")
 }
@@ -23,9 +25,11 @@ impl AppState {
     }
 }
 
-fn rooms_router() -> Router<AppState>{
-    Router::new().route("/create", post(create_room).layer(middleware::from_fn(authorization_check))
-        ).route("/", get(get_public_rooms).layer(middleware::from_fn(authorization_check)))
+
+fn rooms_router(state:AppState) -> Router<AppState>{
+    Router::new().route("/create", post(create_room).layer(middleware::from_fn(authorization_check)).layer(middleware::from_fn_with_state(state.clone(),active_room_checks))
+        ).route("/", get(get_public_rooms).layer(middleware::from_fn(authorization_check))
+        )
     
 }
 
@@ -38,13 +42,14 @@ async fn main(){
                             .min_connections(2) // min no of connections pool keeps alive even when idle
                             .connect("postgresql://postgres:phani@localhost:5432/auction")
                             .await.unwrap();
+    let state = AppState::new(database_connection);
     let auth_router = Router::new().route("/login", post(login) ).route("/sign-up", post(sign_up))
      .route("/forgot-credentials/:mail_id", post(forgot_credentials) ) ;
     let app = Router::new()
     .nest("/authentication", auth_router)
     .route("/home", get(home).layer(middleware::from_fn(authorization_check)))
-    .nest("/rooms", rooms_router())
-    .with_state(AppState::new(database_connection)); // state must be specified at last
+    .nest("/rooms", rooms_router(state.clone()))
+    .with_state(state); // state must be specified at last
 
     let tcp_listener = tokio::net::TcpListener::bind("127.0.0.1:9090").await.unwrap() ;
     println!("server running on the port {:#?}", tcp_listener);
