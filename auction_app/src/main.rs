@@ -1,7 +1,5 @@
 
 
-use std::sync::Arc;
-
 use axum::{middleware, routing::{get, post},  Router };
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 mod handlers;
@@ -9,7 +7,7 @@ use handlers::{authentication_handlers::*, rooms_handler::*};
 mod models;
 mod middlewares;
 use middlewares::{authentication_middleware::*};
-use middlewares::rooms_middleware::active_room_checks;
+use middlewares::rooms_middleware::{active_room_checks,room_id_check};
 async fn home() -> String{
     String::from("true")
 }
@@ -29,6 +27,9 @@ impl AppState {
 fn rooms_router(state:AppState) -> Router<AppState>{
     Router::new().route("/create", post(create_room).layer(middleware::from_fn(authorization_check)).layer(middleware::from_fn_with_state(state.clone(),active_room_checks))
         ).route("/", get(get_public_rooms).layer(middleware::from_fn(authorization_check))
+        ).route("/join-room/:user_id/:room_id/:team_name", get(join_room).layer(middleware::from_fn(authorization_check)).
+        layer(middleware::from_fn_with_state(state.clone(),active_room_checks))
+        .layer(middleware::from_fn_with_state(state.clone(), room_id_check))
         )
     
 }

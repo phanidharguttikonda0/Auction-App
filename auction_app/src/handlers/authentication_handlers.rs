@@ -32,7 +32,10 @@ pub async fn login(State(state): State<AppState>, Form(login_data): Form<Authent
 pub async fn sign_up(State(state): State<AppState>,Form(new_user): Form<SignUp>) -> Json<Result<Authorization, String>> {
 	println!("new_user : {:#?}", new_user) ;
 	let database_connection = state.database_connection ;
-	let result = sqlx::query_as::<_,Details>("insert into users (username,mail_id, password) values ($1,$2,$3)")
+	let result = sqlx::query_as::<_,Details>("insert into users 
+		(username,mail_id, password) values ($1,$2,$3)
+		RETURNING username,id
+		")
 	.bind(&new_user.username)
 	.bind(&new_user.mail_id)
 	.bind(&new_user.password)

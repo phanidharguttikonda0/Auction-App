@@ -14,11 +14,25 @@ pub enum RoomState{
 	COMPLETED
 }
 
+#[derive(Debug, Deserialize)]
+pub enum Teams{
+	MumbaiIndians,
+	ChennaiSuperKings,
+	RoyalChallengesBengaluru,
+	SunrisersHyderabad,
+	KolkataKingKnightRiders,
+	PunjabKings,
+	DelhiCapitals,
+	RajastanRoyals,
+	LucknowSuperGaints,
+	GujaratTitans
+}
+
 #[derive(Deserialize, Debug, sqlx::FromRow)]
 pub struct CreateRoom{
-	pub user_id: i32, // creator user id
 	pub accessibility: Accessability,
-	pub state: RoomState
+	pub state: RoomState,
+	pub team: Teams
 }
 
 
@@ -27,3 +41,32 @@ pub struct Roomid{
 	pub room_id: Uuid,
 }
 
+#[derive(Debug, Serialize)]
+pub struct RoomCreation{
+	pub room_id: Uuid,
+	pub participant_id: i32
+}
+
+
+#[derive(Debug,sqlx::FromRow)]
+pub struct Participant{
+	pub participant_id: i32
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JoinRoomPath{
+	pub room_id: String,
+	pub team_name: Teams
+}
+
+#[derive(Debug,Deserialize,sqlx::FromRow, Serialize)]
+pub struct PublicRoom{
+	pub username: String,
+	pub team_selected: String,
+	pub room_id: Uuid
+}
+
+#[derive(Debug, Serialize)]
+pub struct PublicRoomsReturn{
+	pub public_rooms: Vec<PublicRoom>
+}

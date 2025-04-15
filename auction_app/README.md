@@ -1,1 +1,4 @@
-sqlx migrate run --database-url postgres://postgres:phani@localhost:5432/database-name
+sqlx migrate run --database-url postgres://postgres:phani@localhost:5432/auction
+// eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VybmFtZSI6InBoYW5pMSIsInVzZXJJZCI6MX0.PqXGPK3g1OcsA79sR-vkbOSohVI1RoIrXwdFCwlIKCY -> phani1
+
+eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VybmFtZSI6InBoYW5pIiwidXNlcklkIjoyfQ.HxOypfr9Gz7Sx9B5hra3GwFx8uJ2a3VTkf6pUu7TSSE

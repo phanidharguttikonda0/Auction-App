@@ -39,10 +39,24 @@ CREATE TABLE players (
 
 CREATE TABLE participants (
     participant_id SERIAL PRIMARY KEY,
-    team_selected VARCHAR(50) NOT NULL,
+    team_selected VARCHAR(50) NOT NULL CHECK (
+        team_selected IN (
+            'MumbaiIndians',
+            'ChennaiSuperKings', 
+            'RoyalChallengesBengaluru',
+            'SunrisersHyderabad',
+            'KolkataKingKnightRiders',
+            'PunjabKings',
+            'DelhiCapitals',
+            'RajastanRoyals',
+            'LucknowSuperGaints',
+            'GujaratTitans'
+        )
+    ),
     user_id INT REFERENCES users(id),
-    room_id UUID REFERENCES rooms(room_id)
-    
+    room_id UUID REFERENCES rooms(room_id),
+    UNIQUE(user_id, room_id),
+    UNIQUE (room_id, team_selected)
 );
 
 CREATE TABLE players_unsold (

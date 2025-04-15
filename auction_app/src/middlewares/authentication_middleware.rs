@@ -41,10 +41,12 @@ pub fn generate_authorization_header(username: String, user_id: i32) -> String {
 }
 
 
-pub async fn authorization_check(req: Request, next: Next) -> Result<Response, StatusCode>{
+pub async fn authorization_check(mut req: Request, next: Next) -> Result<Response, StatusCode>{
 	
 	let header = req.headers().get("authorization").unwrap().to_str().unwrap() ;
-	if authorization_header_check(header).0{
+	let val = authorization_header_check(header);
+	if val.0{
+		req.extensions_mut().insert(val.1);
 		Ok(next.run(req).await)
 	}else{
 		Err(StatusCode::UNAUTHORIZED)

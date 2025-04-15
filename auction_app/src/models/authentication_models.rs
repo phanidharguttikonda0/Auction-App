@@ -43,7 +43,7 @@ impl Authorization {
 	}
 }
 
-#[derive(Deserialize,Serialize)]
+#[derive(Deserialize,Serialize,Clone)]
 pub struct Claims {
 	pub username: String,
 	pub userId: i32
