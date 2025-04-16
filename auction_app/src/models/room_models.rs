@@ -70,3 +70,10 @@ pub struct PublicRoom{
 pub struct PublicRoomsReturn{
 	pub public_rooms: Vec<PublicRoom>
 }
+
+#[derive(Debug, sqlx::FromRow, Serialize)]
+pub struct GetTeams{
+	pub amount: i32,
+	pub player_name: String,
+	pub role: String
+}

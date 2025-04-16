@@ -70,6 +70,6 @@ CREATE TABLE bids (
     room_id UUID REFERENCES rooms(room_id),
     player_id INT REFERENCES players(player_id),
     participant_id INT REFERENCES participants(participant_id),
-    amount INT NOT NULL
+    amount INT NOT NULL -- 50L 100L, 150L 400L(we will use L instead of cr)
 );
 
