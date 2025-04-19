@@ -5,7 +5,7 @@ use axum::{
 };
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 mod handlers;
-use handlers::{authentication_handlers::*, rooms_handler::*, players_handlers::*};
+use handlers::{authentication_handlers::*, rooms_handler::*, players_handlers::*, other_handlers::*};
 mod middlewares;
 mod models;
 use middlewares::authentication_middleware::*;
@@ -90,6 +90,9 @@ async fn main() {
         )
         .nest("/rooms", rooms_router(state.clone()))
         .nest("/players", players_routes())
+        .route("/search/:username", get(get_username).layer(middleware::from_fn(authorization_check)))
+        .route("/profile/:username", get(get_profile).layer(middleware::from_fn(authorization_check)))
+        .route("/profile/:auction_id/:username", get(get_auction).layer(middleware::from_fn(authorization_check)))
         .with_state(state); // state must be specified at last
                             // here we are creating the tcp connection
     let tcp_listener = tokio::net::TcpListener::bind("127.0.0.1:9090")
