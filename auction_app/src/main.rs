@@ -5,7 +5,7 @@ use axum::{
 };
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 mod handlers;
-use handlers::{authentication_handlers::*, rooms_handler::*};
+use handlers::{authentication_handlers::*, rooms_handler::*, players_handlers::*};
 mod middlewares;
 mod models;
 use middlewares::authentication_middleware::*;
@@ -57,6 +57,16 @@ fn rooms_router(state: AppState) -> Router<AppState> {
             ))
 }
 
+fn players_routes() -> Router<AppState> {
+    Router::new().route("/:pool_id", get(get_players).layer(
+        middleware::from_fn(authorization_check)
+        )).route("/:stats_id", get(get_player).layer(middleware::from_fn(authorization_check)))
+        .route("/unsold/:room_id", get(get_unsold_players)
+            .layer(middleware::from_fn(authorization_check))
+            )
+}
+
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)] // it uses all the cores in system
 async fn main() {
     // at max only 100 connections only psql opens at time , if more requests accessing them
@@ -79,6 +89,7 @@ async fn main() {
             get(home).layer(middleware::from_fn(authorization_check)),
         )
         .nest("/rooms", rooms_router(state.clone()))
+        .nest("/players", players_routes())
         .with_state(state); // state must be specified at last
                             // here we are creating the tcp connection
     let tcp_listener = tokio::net::TcpListener::bind("127.0.0.1:9090")
