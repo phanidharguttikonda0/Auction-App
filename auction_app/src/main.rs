@@ -10,6 +10,9 @@ mod middlewares;
 mod models;
 use middlewares::authentication_middleware::*;
 use middlewares::rooms_middleware::{active_room_checks, room_id_check};
+mod web_socket;
+use web_socket::*;
+
 async fn home() -> String {
     String::from("true")
 }
@@ -93,6 +96,7 @@ async fn main() {
         .route("/search/:username", get(get_username).layer(middleware::from_fn(authorization_check)))
         .route("/profile/:username", get(get_profile).layer(middleware::from_fn(authorization_check)))
         .route("/profile/:auction_id/:username", get(get_auction).layer(middleware::from_fn(authorization_check)))
+        .route("/ws", get(handle_ws_upgrade))
         .with_state(state); // state must be specified at last
                             // here we are creating the tcp connection
     let tcp_listener = tokio::net::TcpListener::bind("127.0.0.1:9090")
