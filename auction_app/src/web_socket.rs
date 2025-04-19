@@ -1,6 +1,5 @@
 use axum::{extract::ws::{Message, WebSocket, WebSocketUpgrade}, response::IntoResponse};
 
-use crate::models::room_models::Roomid;
 
 pub async fn handle_ws_upgrade(ws: WebSocketUpgrade) -> impl IntoResponse {
 	ws.on_upgrade(handle_ws)
@@ -14,9 +13,13 @@ async fn handle_ws(mut socket: WebSocket){
     	match msg {
     		// nothing but socket.send() from the client
     		Message::Text(text) => {
-				
-
-    			
+				// firstly take CreateConnection
+				// secondly add a new participant using Room-Creation, check whether reached to the max players
+				// thirdly recieve the bids and sends back the response as next user along with sold to team name
+				// it will not send response until and unless the current bid has ended
+    			// if all teams reaches 18 players, then allow them to choose
+    			// the players they want , such that they can send the players they want
+    			//  from then the socket sends only those players
     		},
     		// equivalent to socket.close()
     		Message::Close(_) => {},

@@ -12,6 +12,7 @@ use middlewares::authentication_middleware::*;
 use middlewares::rooms_middleware::{active_room_checks, room_id_check};
 mod web_socket;
 use web_socket::*;
+mod web_socket_models;
 
 async fn home() -> String {
     String::from("true")
