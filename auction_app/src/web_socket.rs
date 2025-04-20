@@ -1,7 +1,8 @@
 use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::IntoResponse};
 
-use crate::{models::players_models::Player, web_socket_models::{CreateConnection, LastBid, Room}, AppState};
-
+use crate::{models::{players_models::Player,}, web_socket_models::{CreateConnection, LastBid, Room, RoomConnection}, AppState};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use crate::Participant;
 
 pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(connections): State<AppState>) -> impl IntoResponse {
 	ws.on_upgrade(move |socket| handle_ws(socket, connections))
@@ -14,6 +15,66 @@ pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(connections): State<A
 async fn handle_ws(mut socket: WebSocket, connections:AppState){
 	// Equivalent of `socket.onopen`
     println!("📡 Client connected");
+    // Create an unbounded channel to send messages to this client
+    let (tx, mut rx) = unbounded_channel::<Message>() ;
+
+
+
+
+
+    while let Some(Ok(msg)) = socket.recv().await {
+
+    	match msg {
+    		Message::Text(text) => {
+    			
+    			let room_creation = serde_json::from_str::<CreateConnection>(&text);
+    			let room_join = serde_json::from_str::<RoomConnection>(&text) ;
+
+
+    			if let Ok(create) = room_creation {
+
+    				let participant = Participant {
+    					participant_id: create.participant_id as u32,
+    					sender: tx.clone()
+    				};
+
+    				// we are going to store this transaction to the connections
+    				let mut state = connections.websocket_connections.write().unwrap();
+    				state.entry(create.room_id.clone()).or_default().push(participant);
+
+    				// now we need to add to redis,after storing the socket, if the user
+    				// disconnects and join again, then we need to check whether the redis already
+    				// contains or not, if it contains then continue, with out adding to redis again
+
+    			}else if let Ok(room_join) = room_join {
+    				let participant = Participant {
+    					participant_id: room_join.participant_id as u32,
+    					sender: tx.clone()
+    				};
+
+    				// we are going to store this transaction to the connections
+    				let mut state = connections.websocket_connections.write().unwrap();
+    				state.entry(room_join.room_id.clone()).or_default().push(participant);
+
+    			}else{
+    				println!("It's neither of the above");
+    			}
+
+
+
+    		},
+    		Message::Binary(_) => {},
+    		Message::Ping(_) => {},
+    		Message::Pong(_) => {},
+    		Message::Close(_close) => {}
+    	}
+
+
+    }
+    
+
+
+
 
     
 }

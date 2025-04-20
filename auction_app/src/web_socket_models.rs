@@ -1,21 +1,28 @@
 
 use uuid::Uuid ;
-
+use tokio::sync::mpsc::UnboundedSender;
+use axum::extract::ws::Message;
 
 #[derive(Debug, Deserialize,Serialize)]
 pub struct CreateConnection{ // for creating a new connection
-	pub room_id: Uuid,
+	pub room_id: String,
 	pub participant_id: i32,
 	pub max_numbers: i32,
 	pub team_selected: String
 }
 
 #[derive(Debug, Deserialize,Serialize)]
-pub struct Participant{
-	pub room_id: Uuid,
+pub struct RoomConnection{
+	pub room_id: String,
 	pub participant_id: i32,
 	pub team_selected: String
 }
+
+#[derive(Debug)]
+pub struct Participant {
+    pub participant_id: u32,
+    pub sender: UnboundedSender<Message>, // Channel to send messages to this user
+} // as it was the not able to use Serializable and Deserializable we are going to do it manually
 
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, HashSet};
