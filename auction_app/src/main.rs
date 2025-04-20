@@ -13,6 +13,9 @@ use middlewares::rooms_middleware::{active_room_checks, room_id_check};
 mod web_socket;
 use web_socket::*;
 mod web_socket_models;
+use std::sync::{Arc,RwLock};
+use std::collections::HashMap;
+use web_socket_models::Participant ;
 
 async fn home() -> String {
     String::from("true")
@@ -21,12 +24,16 @@ async fn home() -> String {
 #[derive(Clone)]
 struct AppState {
     database_connection: Pool<Postgres>, // where it internally uses Arc so no need to wrapping it inside Arc
+    redis_connection: redis::Client,
+    websocket_connections: Arc<RwLock<HashMap<String, Vec<Participant>>>>,
 }
 
 impl AppState {
-    fn new(database_connection: Pool<Postgres>) -> AppState {
+    fn new(database_connection: Pool<Postgres>, redis_connection: redis::Client, websocket_connections:Arc<RwLock<HashMap<String, Vec<Participant>>>>) -> AppState {
         AppState {
             database_connection,
+            redis_connection,
+            websocket_connections
         }
     }
 }
@@ -81,7 +88,9 @@ async fn main() {
         .connect("postgresql://postgres:phani@localhost:5432/auction")
         .await
         .unwrap();
-    let state = AppState::new(database_connection);
+        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap() ;
+        let websocket_connections = Arc::new(RwLock::new(HashMap::new()));
+    let state = AppState::new(database_connection, redis_client,websocket_connections);
     let auth_router = Router::new()
         .route("/login", post(login))
         .route("/sign-up", post(sign_up))
