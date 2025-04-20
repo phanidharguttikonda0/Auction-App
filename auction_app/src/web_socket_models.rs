@@ -43,9 +43,21 @@ pub struct Player {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct LastBid {
+pub struct Bid {
     pub amount: f64,
     pub team_name: String,
+    pub room_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LastBid {
+	    pub amount: f64,
+    	pub team_name: String,
+}
+
+#[derive(Debug,Deserialize)]
+pub struct Ready{
+	pub room_id: String
 }
 
 #[derive(Serialize, Deserialize)]

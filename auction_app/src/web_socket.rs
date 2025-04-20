@@ -1,6 +1,6 @@
 use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::IntoResponse};
 
-use crate::{models::{players_models::Player,}, web_socket_models::{CreateConnection, LastBid, Room, RoomConnection}, AppState};
+use crate::{models::players_models::Player, web_socket_models::{Bid, CreateConnection, LastBid, Ready, Room, RoomConnection}, AppState};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use crate::Participant;
 
@@ -29,7 +29,8 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
     			
     			let room_creation = serde_json::from_str::<CreateConnection>(&text);
     			let room_join = serde_json::from_str::<RoomConnection>(&text) ;
-
+    			let bid = serde_json::from_str::<Bid>(&text) ;
+    			let ready = serde_json::from_str::<Ready>(&text) ;
 
     			if let Ok(create) = room_creation {
 
@@ -46,6 +47,13 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
     				// disconnects and join again, then we need to check whether the redis already
     				// contains or not, if it contains then continue, with out adding to redis again
 
+    				// we need to store it in the redis
+
+    				//sending data to all the members in the room
+    				broadcast_message(&connections, Message::Text(
+    					serde_json::to_string::<CreateConnection>(&create).unwrap()
+    					), create.room_id);
+
     			}else if let Ok(room_join) = room_join {
     				let participant = Participant {
     					participant_id: room_join.participant_id as u32,
@@ -56,8 +64,26 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
     				let mut state = connections.websocket_connections.write().unwrap();
     				state.entry(room_join.room_id.clone()).or_default().push(participant);
 
+    				// we need to store it in the redis
+
+    				//sending data to all the members in the room, when a new member joined
+    				broadcast_message(&connections, Message::Text(
+    					serde_json::to_string::<RoomConnection>(&room_join).unwrap()
+    				), room_join.room_id);
+
+    				// checking whether max members joined or not if , then we will start the auction
+
+    			}else if let Ok(bid) = bid {
+    				// now we need to add the last bid to the redis and broadcast the message to all the users in the room
+
+    			}else if let Ok(ready) = ready {
+    				// getting ready
+    				broadcast_message(&connections, Message::Text(
+    					serde_json::to_string::<Player>(&get_next_player(1).await).unwrap()
+    					), ready.room_id) ;
     			}else{
     				println!("It's neither of the above");
+    				
     			}
 
 
@@ -78,6 +104,37 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
 
     
 }
+
+
+async fn broadcast_message(
+    connections: &AppState,
+    message: Message,
+    room_id: String,
+) {
+    // Acquire read lock on the shared websocket_connections map
+    let guard = connections.websocket_connections.read().unwrap();
+	let room_connections = guard.get(&room_id);
+
+
+    match room_connections {
+        Some(participants) => {
+            // Iterate over participants and send the message
+            participants.iter().for_each(|participant| {
+                // Potential panic here if channel is closed!
+                if let Err(e) = participant.sender.send(message.clone()) {
+                    println!(
+                        "❌ Failed to send message to participant {}: {:?}",
+                        participant.participant_id, e
+                    );
+                }
+            });
+        },
+        None => {
+            println!("⚠️ No room_id '{}' exists in the websocket_connections map", room_id);
+        }
+    }
+}
+
 
 
 async fn create_room(room: Room) -> bool {
