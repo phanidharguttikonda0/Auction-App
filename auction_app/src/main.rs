@@ -13,7 +13,8 @@ use middlewares::rooms_middleware::{active_room_checks, room_id_check};
 mod web_socket;
 use web_socket::*;
 mod web_socket_models;
-use std::sync::{Arc,RwLock};
+use std::sync::{Arc};
+use tokio::sync::RwLock;
 use std::collections::HashMap;
 use web_socket_models::Participant ;
 
@@ -71,7 +72,7 @@ fn rooms_router(state: AppState) -> Router<AppState> {
 fn players_routes() -> Router<AppState> {
     Router::new().route("/:pool_id", get(get_players).layer(
         middleware::from_fn(authorization_check)
-        )).route("/:stats_id", get(get_player).layer(middleware::from_fn(authorization_check)))
+        )).route("/player-stats/:stats_id", get(get_player).layer(middleware::from_fn(authorization_check)))
         .route("/unsold/:room_id", get(get_unsold_players)
             .layer(middleware::from_fn(authorization_check))
             )
@@ -107,7 +108,7 @@ async fn main() {
         .route("/search/:username", get(get_username).layer(middleware::from_fn(authorization_check)))
         .route("/profile/:username", get(get_profile).layer(middleware::from_fn(authorization_check)))
         .route("/profile/:auction_id/:username", get(get_auction).layer(middleware::from_fn(authorization_check)))
-        .route("/ws", get(handle_ws_upgrade))
+        .route("/", get(handle_ws_upgrade))
         .with_state(state); // state must be specified at last
                             // here we are creating the tcp connection
     let tcp_listener = tokio::net::TcpListener::bind("127.0.0.1:9090")

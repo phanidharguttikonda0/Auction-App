@@ -2,6 +2,7 @@
 use uuid::Uuid ;
 use tokio::sync::mpsc::UnboundedSender;
 use axum::extract::ws::Message;
+use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Deserialize,Serialize)]
 pub struct CreateConnection{ // for creating a new connection
@@ -24,7 +25,7 @@ pub struct Participant {
     pub sender: UnboundedSender<Message>, // Channel to send messages to this user
 } // as it was the not able to use Serializable and Deserializable we are going to do it manually
 
-use serde::{Serialize, Deserialize};
+
 use std::collections::{HashMap, HashSet};
 
 #[derive(Serialize, Deserialize)]
@@ -38,8 +39,11 @@ pub struct Player {
     pub player_id: u32,
     pub player_name: String,
     pub role: String,
-    pub base_price: f64,
     pub age: u32,
+    pub stats: i32,
+    pub base_price: i32,
+    pub country: String,
+    pub capped: bool
 }
 
 #[derive(Serialize, Deserialize, Debug)]

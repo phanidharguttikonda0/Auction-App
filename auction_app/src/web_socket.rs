@@ -1,7 +1,7 @@
 use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::IntoResponse};
-
-use crate::{models::players_models::Player, web_socket_models::{Bid,Sell, CreateConnection, LastBid, Ready, Room, RoomConnection}, AppState};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use futures::{StreamExt, SinkExt}; // Needed for `.next()` and `.send()`
+use crate::{ web_socket_models::{Bid,Sell, CreateConnection, LastBid, Ready, Room, RoomConnection,Player}, AppState};
+use tokio::sync::mpsc::unbounded_channel;
 use crate::Participant;
 
 pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(connections): State<AppState>) -> impl IntoResponse {
@@ -15,13 +15,22 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
 	// Equivalent of `socket.onopen`
     println!("📡 Client connected");
     // Create an unbounded channel to send messages to this client
-    let (tx, mut rx) = unbounded_channel::<Message>() ;
+    let (tx, mut rx) = unbounded_channel::<Message>() ; // for each websocket connection this will be created once
+
+
+    let (mut sender, mut receiver) = socket.split() ; // for each websocket connection this will be created once
+    tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if let Err(e) = sender.send(msg).await {
+                println!("❌ Failed to send WS message to client: {:?}", e);
+                break;
+            }
+        }
+    });
 
 
 
-
-
-    while let Some(Ok(msg)) = socket.recv().await {
+    while let Some(Ok(msg)) = receiver.next().await {
 
     	match msg {
     		Message::Text(text) => {
@@ -39,9 +48,9 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
     				};
 
     				// we are going to store this transaction to the connections
-    				let mut state = connections.websocket_connections.write().unwrap();
+    				let mut state = connections.websocket_connections.write().await;
     				state.entry(create.room_id.clone()).or_default().push(participant);
-
+                    drop(state);
     				// now we need to add to redis,after storing the socket, if the user
     				// disconnects and join again, then we need to check whether the redis already
     				// contains or not, if it contains then continue, with out adding to redis again
@@ -51,7 +60,7 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
     				//sending data to all the members in the room
     				broadcast_message(&connections, Message::Text(
     					serde_json::to_string::<CreateConnection>(&create).unwrap()
-    					), create.room_id);
+    					), create.room_id).await;
 
     			}else if let Ok(room_join) = room_join {
     				let participant = Participant {
@@ -60,15 +69,15 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
     				};
 
     				// we are going to store this transaction to the connections
-    				let mut state = connections.websocket_connections.write().unwrap();
+    				let mut state = connections.websocket_connections.write().await;
     				state.entry(room_join.room_id.clone()).or_default().push(participant);
-
+                    drop(state);
     				// we need to store it in the redis
 
     				//sending data to all the members in the room, when a new member joined
     				broadcast_message(&connections, Message::Text(
     					serde_json::to_string::<RoomConnection>(&room_join).unwrap()
-    				), room_join.room_id);
+    				), room_join.room_id).await;
 
     				// checking whether max members joined or not if , then we will start the auction
 
@@ -76,35 +85,34 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
     				// now we need to add the last bid to the redis and broadcast the message to all the users in the room
 
                     broadcast_message(&connections, Message::Text(
-                        serde_json::to_string::<LastBid>(LastBid{
+                        serde_json::to_string::<LastBid>(&LastBid{
                             amount: bid.amount,
                             team_name: bid.team_name
                         }).unwrap()
-                        ), bid.room_id) ;                    
+                        ), bid.room_id).await ;
 
-    			}else if let Ok(ready) = ready {
+    			}else if let Ok(ready) = ready { // this can be called only by the creator of the  room, we need to set it up in the front-end itself
     				// getting ready
     				broadcast_message(&connections, Message::Text(
     					serde_json::to_string::<Player>(&get_next_player(1).await).unwrap()
-    					), ready.room_id) ;
+    					), ready.room_id).await ;
     			}
                 else if let Ok(sell) = sell {
                     // we are going to sell this player
-                    broadcast_message(&connections, Message::Text(serde_json::to_string::<Sell>(&text).unwrap()),
-                        sell.room_id
-                        );
+                    broadcast_message(&connections, Message::Text(serde_json::to_string::<Sell>(&sell).unwrap()),
+                        sell.room_id.clone()
+                        ).await;
                     // now we need to add this player to psql database
 
                     // we need to update the purse in the redis
 
                     // we need to  broadcast next player to the specific room
                     broadcast_message(&connections, Message::Text(serde_json::to_string::<Player>(
-                        &get_next_player(sell.player_id+1).await).unwrap()
-                        ), sell.room_id) ;
+                        &get_next_player((sell.player_id+1) as i32).await).unwrap()
+                        ), sell.room_id).await ;
                 }
                 else{
     				println!("It's neither of the above");
-                    socket.send("There is nothing to do with the data you sent").unwrap()
     			}
 
 
@@ -113,16 +121,20 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
     		Message::Binary(_) => {},
     		Message::Ping(_) => {},
     		Message::Pong(_) => {},
-    		Message::Close(_close) => {}
+    		Message::Close(_close) => {
+                println!("when this occurs we are going to close the connection for that socket");
+
+            }
     	}
 
 
     }
-    
 
-
-
-
+// room creation handling completed
+// adding participant handling completed
+// getting started with the auction has been completed
+// each bid handling has been completed,
+// sending next player after the bid selling has been completed
     
 }
 
@@ -133,15 +145,16 @@ async fn broadcast_message(
     room_id: String,
 ) {
     // Acquire read lock on the shared websocket_connections map
-    let guard = connections.websocket_connections.read().unwrap();
+    let guard = connections.websocket_connections.read().await;
 	let room_connections = guard.get(&room_id);
-
+    //println!("room_id was ->{}->", room_id) ;
 
     match room_connections {
         Some(participants) => {
             // Iterate over participants and send the message
             participants.iter().for_each(|participant| {
                 // Potential panic here if channel is closed!
+                println!("executing {:#?}", participant );
                 if let Err(e) = participant.sender.send(message.clone()) {
                     println!(
                         "❌ Failed to send message to participant {}: {:?}",
@@ -165,7 +178,18 @@ async fn create_room(room: Room) -> bool {
 
 
 
-async fn get_next_player(player_id: i32) -> Player {}
+async fn get_next_player(player_id: i32) -> Player {
+    Player {
+        player_name: String::from("guttikonda phanidhar reddy"),
+        stats: 1,
+        role: String::from("all-rounder"),
+        age : 22,
+        country : String::from("India"),
+        capped : true,
+        player_id: 1,
+        base_price: 200, // in lakhs
+    }
+}
 
 
 
