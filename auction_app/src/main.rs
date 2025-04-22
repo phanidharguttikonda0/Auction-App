@@ -78,6 +78,7 @@ fn players_routes() -> Router<AppState> {
 }
 
 
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 8)] // it uses all the cores in system
 async fn main() {
     // at max only 100 connections only psql opens at time , if more requests accessing them

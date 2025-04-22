@@ -1,12 +1,11 @@
 use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::IntoResponse};
 
-use crate::{models::players_models::Player, web_socket_models::{Bid, CreateConnection, LastBid, Ready, Room, RoomConnection}, AppState};
+use crate::{models::players_models::Player, web_socket_models::{Bid,Sell, CreateConnection, LastBid, Ready, Room, RoomConnection}, AppState};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use crate::Participant;
 
 pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(connections): State<AppState>) -> impl IntoResponse {
 	ws.on_upgrade(move |socket| handle_ws(socket, connections))
-
 }
 
 
@@ -31,7 +30,7 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
     			let room_join = serde_json::from_str::<RoomConnection>(&text) ;
     			let bid = serde_json::from_str::<Bid>(&text) ;
     			let ready = serde_json::from_str::<Ready>(&text) ;
-
+                let sell = serde_json::from_str::<Sell>(&text) ;
     			if let Ok(create) = room_creation {
 
     				let participant = Participant {
@@ -76,14 +75,36 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
     			}else if let Ok(bid) = bid {
     				// now we need to add the last bid to the redis and broadcast the message to all the users in the room
 
+                    broadcast_message(&connections, Message::Text(
+                        serde_json::to_string::<LastBid>(LastBid{
+                            amount: bid.amount,
+                            team_name: bid.team_name
+                        }).unwrap()
+                        ), bid.room_id) ;                    
+
     			}else if let Ok(ready) = ready {
     				// getting ready
     				broadcast_message(&connections, Message::Text(
     					serde_json::to_string::<Player>(&get_next_player(1).await).unwrap()
     					), ready.room_id) ;
-    			}else{
+    			}
+                else if let Ok(sell) = sell {
+                    // we are going to sell this player
+                    broadcast_message(&connections, Message::Text(serde_json::to_string::<Sell>(&text).unwrap()),
+                        sell.room_id
+                        );
+                    // now we need to add this player to psql database
+
+                    // we need to update the purse in the redis
+
+                    // we need to  broadcast next player to the specific room
+                    broadcast_message(&connections, Message::Text(serde_json::to_string::<Player>(
+                        &get_next_player(sell.player_id+1).await).unwrap()
+                        ), sell.room_id) ;
+                }
+                else{
     				println!("It's neither of the above");
-    				
+                    socket.send("There is nothing to do with the data you sent").unwrap()
     			}
 
 

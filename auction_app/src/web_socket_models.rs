@@ -80,3 +80,10 @@ impl Room {
 		}
 	}
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Sell{
+	pub team_name: String,
+	pub room_id: String,
+	pub player_id: u32
+}
