@@ -4,6 +4,17 @@ use crate::{ web_socket_models::{Bid,Sell, CreateConnection, LastBid, Ready, Roo
 use tokio::sync::mpsc::unbounded_channel;
 use crate::Participant;
 
+
+/*
+this following function does 2 things one is websocket hand shake and other is calls the handle_ws inside a spawned async task
+Because handle_ws() is async and is passed to on_upgrade, Tokio spawns it internally as a task that will run independently for each client.
+on_upgrade(|socket| handle_ws(socket, state))
+it's basically as ,
+tokio::spawn(async move {
+    handle_ws(socket, state).await;
+}); // for each client  a new task will be executed
+
+*/
 pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(connections): State<AppState>) -> impl IntoResponse {
 	ws.on_upgrade(move |socket| handle_ws(socket, connections))
 }
@@ -11,7 +22,7 @@ pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(connections): State<A
 
 
 // redis allows atomicity
-async fn handle_ws(mut socket: WebSocket, connections:AppState){
+async fn handle_ws(mut socket: WebSocket, connections:AppState){ // for each new websocket connection this will be executed once if 10k web socket connections were created then 10k times it will be called
 	// Equivalent of `socket.onopen`
     println!("📡 Client connected");
     // Create an unbounded channel to send messages to this client
@@ -19,18 +30,19 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){
 
 
     let (mut sender, mut receiver) = socket.split() ; // for each websocket connection this will be created once
-    tokio::spawn(async move {
+    tokio::spawn(async move { // we will send messages
         while let Some(msg) = rx.recv().await {
             if let Err(e) = sender.send(msg).await {
                 println!("❌ Failed to send WS message to client: {:?}", e);
                 break;
             }
         }
-    });
+    }); // this task also never ends because of it's loop, where it keeps on waiting if there are any messages that are brodcasted such that it will actually sent to the client
 
 
 
-    while let Some(Ok(msg)) = receiver.next().await {
+    // this loop will never end until the client disconnects, the loop will be running continously
+    while let Some(Ok(msg)) = receiver.next().await { // we recieve messages
 
     	match msg {
     		Message::Text(text) => {
