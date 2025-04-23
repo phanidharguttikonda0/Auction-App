@@ -1,7 +1,18 @@
 use axum::{extract::{ Request, State}, middleware::Next,Extension, response::Response};
 use hyper::StatusCode;
+use sqlx::{Pool, Postgres};
 use uuid::Uuid;
-use crate::{models::{authentication_models::Claims, room_models::Roomid}, AppState};
+use crate::{models::{authentication_models::Claims, room_models::{Roomid, Users}}, AppState};
+
+
+pub async fn get_user_id(participant_id: i32, database_connection: &Pool<Postgres>) -> i32 {
+	let result = sqlx::query_as::<_,Users>("select user_id from participants where participant_id = ($1)").bind(&participant_id).fetch_one(database_connection).await ;
+	match result {
+		Ok(res) => res.user_id,
+		Err(_) => -1
+	}
+}
+
 
 
 pub async fn active_room_checks(State(state): State<AppState>,req: Request,next: Next) -> Result<Response, StatusCode>{

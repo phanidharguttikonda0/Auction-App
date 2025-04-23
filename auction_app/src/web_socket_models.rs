@@ -26,7 +26,7 @@ pub struct Participant {
 } // as it was the not able to use Serializable and Deserializable we are going to do it manually
 
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 
 #[derive(Serialize, Deserialize)]
 pub struct ParticipantConnection {
@@ -66,16 +66,16 @@ pub struct Ready{
 
 #[derive(Serialize, Deserialize)]
 pub struct Room {
-    pub participants: HashMap<u32, (u32, String)>, // remaining purse and participants id's and team-selected
-    pub current_player: Option<Player>,
-    pub last_bid: Option<LastBid>,
-    pub max_players: u32,
+    pub participants: HashMap<String, (u32, u32)>, // key will be team-name , participant-id ,purse-remaining
+    pub current_player: Option<Player>, // where current-player in the room
+    pub last_bid: Option<LastBid>, // the last bid of the current-player
+    pub max_players: u32, // max-players allowed to join the room
 }
 
 impl Room {
 	pub fn new(participant_id: u32, team_name: String,max_people: u32) -> Room {
 		let mut participants = HashMap::new() ;
-		participants.insert(participant_id, (12000,team_name)) ;
+		participants.insert(team_name, (participant_id,12000)) ;
 		Room {
 			participants,
 			current_player: None,

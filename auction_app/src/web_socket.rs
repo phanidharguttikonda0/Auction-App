@@ -1,7 +1,11 @@
-use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::IntoResponse};
-use futures::{StreamExt, SinkExt}; // Needed for `.next()` and `.send()`
-use crate::{ web_socket_models::{Bid,Sell, CreateConnection, LastBid, Ready, Room, RoomConnection,Player}, AppState};
-use tokio::sync::mpsc::unbounded_channel;
+use std::{collections::HashSet, time::Duration};
+
+use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Path, State}, response::IntoResponse, Error};
+use futures::{StreamExt, SinkExt};
+use redis::aio;
+use serde::de::value;
+use crate::{ middlewares::rooms_middleware::get_user_id, web_socket_models::{Bid, CreateConnection, LastBid, Player, Ready, Room, RoomConnection, Sell}, AppState};
+use tokio::sync::{broadcast, mpsc::unbounded_channel};
 use crate::Participant;
 
 
@@ -15,25 +19,46 @@ tokio::spawn(async move {
 }); // for each client  a new task will be executed
 
 */
-pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(connections): State<AppState>) -> impl IntoResponse {
-	ws.on_upgrade(move |socket| handle_ws(socket, connections))
+pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(connections): State<AppState>,Path((room_id,participant_id)): Path<(String,u32)>) -> impl IntoResponse {
+	ws.on_upgrade(move |socket| handle_ws(socket, connections,room_id, participant_id))
 }
 
 
-
+// we are using mpsc(multiple producers and single consumers) where there are multiple producers but there is only a single task consume it (recieves it), where in that reciever only we are sending the data to the client
+// it's like a mail box where many people can put letters in box (producer) and only one person opens it (reciever).
+// let (tx, rx) = mpsc::channel(100); // Bounded channel with buffer of 100, only 100 it's the limit
+// where unbounded channel means where there is no limit on how many messages it gonna store, no limit on the queue size
 // redis allows atomicity
-async fn handle_ws(mut socket: WebSocket, connections:AppState){ // for each new websocket connection this will be executed once if 10k web socket connections were created then 10k times it will be called
+async fn handle_ws(mut socket: WebSocket, connections:AppState, room_id: String, participant_id: u32){ // for each new websocket connection this will be executed once if 10k web socket connections were created then 10k times it will be called
 	// Equivalent of `socket.onopen`
     println!("📡 Client connected");
     // Create an unbounded channel to send messages to this client
     let (tx, mut rx) = unbounded_channel::<Message>() ; // for each websocket connection this will be created once
-
+    let second_connection = connections.clone() ;
     // we split the websocket in to 2 parts because , we are sending data in a different task and recieving in a different task both are not in a single task
     let (mut sender, mut receiver) = socket.split() ; // for each websocket connection this will be created once
     tokio::spawn(async move { // we will send messages
         while let Some(msg) = rx.recv().await { // rx is an unbounded reciever where we actually send the data through it , so when recieves data we will send the data via the sender socket
-            if let Err(e) = sender.send(msg).await {
-                println!("❌ Failed to send WS message to client: {:?}", e);
+            if tokio::time::timeout(Duration::from_secs(5), sender.send(msg)).await.is_err(){
+                // we need to clean up the user , such that user need to join again
+                if let Err(e) = sender.close().await {
+                    println!("Error closing sender: {:?}", e);
+                }
+                let read_state = second_connection.websocket_connections.read().await ;
+                let l = read_state.get(&room_id).unwrap() ;
+                let mut index = 0 ;
+                for participant in l{
+                    if participant.participant_id == participant_id {
+                        drop(read_state) ;
+                        let mut state = second_connection.websocket_connections.write().await ;
+                        let mut l:&mut Vec<Participant> = state.get_mut(&room_id).unwrap() ;
+                        l.remove(index);
+                        drop(state) ;
+                        break;
+                    }
+                    index += 1 ;
+                } // we are removing the connection of the user, telling him to rejoin again
+
                 break;
             }
         } // this loop never ends keeps on waiting until sender socket was disconnected
@@ -52,46 +77,117 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){ // for each new
     			let bid = serde_json::from_str::<Bid>(&text) ;
     			let ready = serde_json::from_str::<Ready>(&text) ;
                 let sell = serde_json::from_str::<Sell>(&text) ;
-    			if let Ok(create) = room_creation {
+                let mut redis_connection = connections.redis_connection.get_async_connection().await.unwrap() ;// return redis::aio::Connection
 
-    				let participant = Participant {
-    					participant_id: create.participant_id as u32,
-    					sender: tx.clone()
-    				};
+                if let Ok(create) = room_creation {
 
-    				// we are going to store this transaction to the connections
-    				let mut state = connections.websocket_connections.write().await;
-    				state.entry(create.room_id.clone()).or_default().push(participant);
+                    let participant = Participant {
+                        participant_id: create.participant_id as u32,
+                        sender: tx.clone()
+                    };
+
+                    // we are going to store this transaction to the connections
+                    let mut state = connections.websocket_connections.write().await;
+                    state.entry(create.room_id.clone()).or_default().push(participant);
                     drop(state);
-    				// now we need to add to redis,after storing the socket, if the user
-    				// disconnects and join again, then we need to check whether the redis already
-    				// contains or not, if it contains then continue, with out adding to redis again
+                    // now we need to add to redis,after storing the socket, if the user
+                    // disconnects and join again, then we need to check whether the redis already
+                    // contains or not, if it contains then continue, with out adding to redis again
+                    // we need to check whether the room-exists
+                    let room = redis::cmd("GET").arg(&create.room_id).query_async::<aio::Connection,String>(&mut redis_connection).await ;
+                    match room {
+                        Ok(room) => {
+                            println!("room exists already, so it's an invalid room-id") ;
+                            broadcast_message(&connections, Message::Text(String::from("Invalid Room-Id")), create.room_id).await ;
+                        },
+                        Err(err) => {
+                            println!("No room exists , so we can create the room") ;
+                            // we need to store it in the redis
+                            let serialized = serde_json::to_string(&Room::new(
+                                create.participant_id as u32,
+                            create.team_selected.clone(),
+                            create.max_numbers as u32
+                                )).unwrap() ;
+                            redis::cmd("SET").arg(&create.room_id).arg(&serialized).query_async::<aio::Connection,()>(&mut redis_connection).await.unwrap() ;
+            				//sending data to all the members in the room
+            				broadcast_message(&connections, Message::Text(
+            					serde_json::to_string::<CreateConnection>(&create).unwrap()
+            					), create.room_id).await;
+                        }
+                    }
 
-    				// we need to store it in the redis
-
-    				//sending data to all the members in the room
-    				broadcast_message(&connections, Message::Text(
-    					serde_json::to_string::<CreateConnection>(&create).unwrap()
-    					), create.room_id).await;
 
     			}else if let Ok(room_join) = room_join {
     				let participant = Participant {
     					participant_id: room_join.participant_id as u32,
     					sender: tx.clone()
     				};
+                    // we need check whether the room is full or not , if not if the user already exists or not, if room_full no opportunity
+                    // if room not full but user exists then we will just store the connection in the in memory instead of storing data again
+                    // one should not have the same team name as well.
+                    let results = redis::cmd("GET").arg(&room_join.room_id).query_async::<_, String>(&mut redis_connection).await.unwrap() ;
 
-    				// we are going to store this transaction to the connections
-    				let mut state = connections.websocket_connections.write().await;
-    				state.entry(room_join.room_id.clone()).or_default().push(participant);
-                    drop(state);
-    				// we need to store it in the redis
+                    match serde_json::from_str::<Room>(&results) {
+                        Ok(mut room) =>{
+                            // room available
 
-    				//sending data to all the members in the room, when a new member joined
-    				broadcast_message(&connections, Message::Text(
-    					serde_json::to_string::<RoomConnection>(&room_join).unwrap()
-    				), room_join.room_id).await;
+                                    let mut set:HashSet<i32> = HashSet::new() ; // adding user-ids
+                                    let mut b = true ;
 
-    				// checking whether max members joined or not if , then we will start the auction
+                                    for x in room.participants.values() {
+                                        let value = get_user_id(x.0 as i32, &connections.database_connection).await ;
+                                        if set.contains(&value ) {
+                                            b = false ; break;
+                                        }else{
+                                            set.insert(value) ;
+                                        }
+                                    }
+
+                                    // we are going to store this transaction to the connections
+                                    let mut state = connections.websocket_connections.write().await;
+                        	       			state.entry(room_join.room_id.clone()).or_default().push(participant);
+                                               drop(state);
+                                    if b && (room.participants.len() as u32) < room.max_players {
+                                        // we need to check whether the team was already selected or not
+                                        for x in room.participants.keys() {
+                                            if room_join.team_selected == x.to_string(){
+                                                b = false;
+                                                break;
+                                            }
+                                        }
+
+                                        if b {
+
+                                            room.participants.insert(room_join.team_selected.clone(), (room_join.participant_id as u32, 12000));
+
+                                            // we need to add it in the redis
+                                            let serialized = serde_json::to_string(&room).unwrap() ;
+
+                                            redis::cmd("SET").arg(&room_join.room_id).arg(&serialized).query_async::<_,()>(&mut redis_connection).await.unwrap() ;
+
+                                            //sending data to all the members in the room, when a new member joined or old member has been re-joined
+                            				broadcast_message(&connections, Message::Text(
+                            					serde_json::to_string::<RoomConnection>(&room_join).unwrap()
+                            				), room_join.room_id).await;
+
+                                        }else{
+                                            //sending data to all the members in the room, when a new member joined or old member has been re-joined
+                            				broadcast_message(&connections, Message::Text(String::from("Select a different team")), room_join.room_id).await;
+                                        }
+
+                                    }else{
+                                        //sending data to all the members in the room, when a new member joined or old member has been re-joined
+                            				broadcast_message(&connections, Message::Text(
+                            					serde_json::to_string::<RoomConnection>(&room_join).unwrap()
+                            				), room_join.room_id).await;
+                                    }
+
+
+                        },
+                        Err(err) => {
+                            println!("Room doesn't exists {}", err) ;
+                        }
+                    }
 
     			}else if let Ok(bid) = bid {
     				// now we need to add the last bid to the redis and broadcast the message to all the users in the room
@@ -139,6 +235,8 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){ // for each new
             }
     	}
 
+        // So, if multiple parts of your app want to send data to the same client, they can’t all just call .send() directly on the WebSocket — it would cause race conditions or borrowing issues.
+
 
     }
 
@@ -149,6 +247,8 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){ // for each new
 // sending next player after the bid selling has been completed
     
 }
+
+
 
 
 async fn broadcast_message(

@@ -53,6 +53,11 @@ pub struct Participant{
 	pub participant_id: i32
 }
 
+#[derive(Debug, sqlx::FromRow)]
+pub struct Users{
+	pub user_id: i32
+}
+
 #[derive(Debug, Deserialize)]
 pub struct JoinRoomPath{
 	pub room_id: String,

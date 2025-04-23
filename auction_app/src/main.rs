@@ -3,6 +3,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use hyper::client;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 mod handlers;
 use handlers::{authentication_handlers::*, rooms_handler::*, players_handlers::*, other_handlers::*};
