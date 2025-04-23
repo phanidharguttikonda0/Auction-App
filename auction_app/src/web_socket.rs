@@ -28,21 +28,21 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState){ // for each new
     // Create an unbounded channel to send messages to this client
     let (tx, mut rx) = unbounded_channel::<Message>() ; // for each websocket connection this will be created once
 
-
+    // we split the websocket in to 2 parts because , we are sending data in a different task and recieving in a different task both are not in a single task
     let (mut sender, mut receiver) = socket.split() ; // for each websocket connection this will be created once
     tokio::spawn(async move { // we will send messages
-        while let Some(msg) = rx.recv().await {
+        while let Some(msg) = rx.recv().await { // rx is an unbounded reciever where we actually send the data through it , so when recieves data we will send the data via the sender socket
             if let Err(e) = sender.send(msg).await {
                 println!("❌ Failed to send WS message to client: {:?}", e);
                 break;
             }
-        }
+        } // this loop never ends keeps on waiting until sender socket was disconnected
     }); // this task also never ends because of it's loop, where it keeps on waiting if there are any messages that are brodcasted such that it will actually sent to the client
 
 
 
     // this loop will never end until the client disconnects, the loop will be running continously
-    while let Some(Ok(msg)) = receiver.next().await { // we recieve messages
+    while let Some(Ok(msg)) = receiver.next().await { // we recieve messages from the client
 
     	match msg {
     		Message::Text(text) => {
@@ -167,7 +167,7 @@ async fn broadcast_message(
             participants.iter().for_each(|participant| {
                 // Potential panic here if channel is closed!
                 println!("executing {:#?}", participant );
-                if let Err(e) = participant.sender.send(message.clone()) {
+                if let Err(e) = participant.sender.send(message.clone()) { // here we are actually sending the data to the unbounderSender that will be recieved by the unboundedReciever
                     println!(
                         "❌ Failed to send message to participant {}: {:?}",
                         participant.participant_id, e
