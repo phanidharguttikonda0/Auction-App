@@ -48,14 +48,14 @@ pub struct Player {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Bid {
-    pub amount: f64,
+    pub amount: u32,
     pub team_name: String,
     pub room_id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LastBid {
-	    pub amount: f64,
+	    pub amount: u32,
     	pub team_name: String,
 }
 
@@ -69,25 +69,30 @@ pub struct Room {
     pub participants: HashMap<String, (u32, u32)>, // key will be team-name , participant-id ,purse-remaining
     pub current_player: Option<Player>, // where current-player in the room
     pub last_bid: Option<LastBid>, // the last bid of the current-player
+    pub players_buyed: HashMap<String, u32>, // no of players buyed by that team
     pub max_players: u32, // max-players allowed to join the room
 }
 
 impl Room {
 	pub fn new(participant_id: u32, team_name: String,max_people: u32) -> Room {
 		let mut participants = HashMap::new() ;
-		participants.insert(team_name, (participant_id,12000)) ;
+		participants.insert(team_name.clone(), (participant_id,12000)) ;
+        let mut teams: HashMap<String, u32> = HashMap::new() ;
+        teams.insert(team_name,0) ;
 		Room {
 			participants,
 			current_player: None,
 			last_bid: None,
+            players_buyed: teams,
 			max_players: max_people
 		}
 	}
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Sell{
+pub struct Sell {
 	pub team_name: String,
 	pub room_id: String,
-	pub player_id: u32
+	pub player_id: u32,
+    pub amount: u32
 }

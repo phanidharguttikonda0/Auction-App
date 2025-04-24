@@ -1,13 +1,12 @@
 use std::{collections::HashSet, time::Duration};
 
 use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Path, State}, response::IntoResponse, Error};
-use futures::{StreamExt, SinkExt};
-use redis::aio;
+use futures::{SinkExt, StreamExt};
+use redis::{aio, cmd};
 use serde::de::value;
-use crate::{ middlewares::rooms_middleware::get_user_id, web_socket_models::{Bid, CreateConnection, LastBid, Player, Ready, Room, RoomConnection, Sell}, AppState};
-use tokio::sync::{broadcast, mpsc::unbounded_channel};
+use crate::{ middlewares::{players_middlewares::player_sold, rooms_middleware::get_user_id}, web_socket_models::{Bid, CreateConnection, LastBid, Player, Ready, Room, RoomConnection, Sell}, AppState};
+use tokio::sync::{broadcast, mpsc::{unbounded_channel, UnboundedSender}};
 use crate::Participant;
-
 
 /*
 this following function does 2 things one is websocket hand shake and other is calls the handle_ws inside a spawned async task
@@ -98,7 +97,7 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState, room_id: String,
                     match room {
                         Ok(room) => {
                             println!("room exists already, so it's an invalid room-id") ;
-                            broadcast_message(&connections, Message::Text(String::from("Invalid Room-Id")), create.room_id).await ;
+                            send_message_back(tx.clone(), String::from("Invalid-room-id")).await ;
                         },
                         Err(err) => {
                             println!("No room exists , so we can create the room") ;
@@ -159,7 +158,7 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState, room_id: String,
                                         if b {
 
                                             room.participants.insert(room_join.team_selected.clone(), (room_join.participant_id as u32, 12000));
-
+                                            room.players_buyed.insert(room_join.team_selected.clone(), 0) ;
                                             // we need to add it in the redis
                                             let serialized = serde_json::to_string(&room).unwrap() ;
 
@@ -171,8 +170,8 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState, room_id: String,
                             				), room_join.room_id).await;
 
                                         }else{
-                                            //sending data to all the members in the room, when a new member joined or old member has been re-joined
-                            				broadcast_message(&connections, Message::Text(String::from("Select a different team")), room_join.room_id).await;
+                                            //sending data to the user-back when he tries to join with an choosen team
+                                            send_message_back(tx.clone(), String::from("Select a different team")).await ;
                                         }
 
                                     }else{
@@ -186,18 +185,29 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState, room_id: String,
                         },
                         Err(err) => {
                             println!("Room doesn't exists {}", err) ;
+                            send_message_back(tx.clone(), String::from("Room doesn't exists")).await ;
                         }
                     }
 
     			}else if let Ok(bid) = bid {
     				// now we need to add the last bid to the redis and broadcast the message to all the users in the room
-
-                    broadcast_message(&connections, Message::Text(
-                        serde_json::to_string::<LastBid>(&LastBid{
-                            amount: bid.amount,
-                            team_name: bid.team_name
-                        }).unwrap()
-                        ), bid.room_id).await ;
+                    // before that we need to check the purse of the user and does with that purse whether he able to buy the remaining players to fullfill 18 players in his/her squad
+                    // bid_allowance will be called
+                    let room =  redis::cmd("GET").arg(&bid.room_id).query_async::<_,String>(&mut redis_connection).await.unwrap() ;
+                    let room = serde_json::from_str::<Room>(&room).unwrap() ;
+                    let remaining_purse = room.participants.get(&bid.team_name).unwrap().1 ;
+                    let players_buyed = room.players_buyed.get(&bid.team_name).unwrap().clone() ;
+                    let current_bid = bid.amount  ;
+                    if room.players_buyed.get(&bid.team_name).unwrap().clone() < 25 as u32 && bid_allowance(remaining_purse, players_buyed, current_bid)  {
+                        broadcast_message(&connections, Message::Text(
+                            serde_json::to_string::<LastBid>(&LastBid{
+                                amount: bid.amount,
+                                team_name: bid.team_name
+                            }).unwrap()
+                            ), bid.room_id).await ;
+                    }else{
+                        send_message_back(tx.clone(), String::from("Bid will not satisfy rules")).await ;
+                    }
 
     			}else if let Ok(ready) = ready { // this can be called only by the creator of the  room, we need to set it up in the front-end itself
     				// getting ready
@@ -207,12 +217,21 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState, room_id: String,
     			}
                 else if let Ok(sell) = sell {
                     // we are going to sell this player
+                    let room =  redis::cmd("GET").arg(&sell.room_id).query_async::<_,String>(&mut redis_connection).await.unwrap() ;
+                    let mut room = serde_json::from_str::<Room>(&room).unwrap() ;
+                    let total_players = room.players_buyed.get(&sell.team_name).unwrap().clone() ;
+                    room.players_buyed.insert(sell.room_id.clone(), total_players+1) ;
+                    let (participant_id, purse_remaining) = room.participants.get(&sell.team_name).unwrap().clone() ;
+                    let remaining_purse = purse_remaining - sell.amount ;
+                    room.participants.insert(sell.team_name.clone(), (participant_id, remaining_purse)) ;
+                    let room = serde_json::to_string(&room).unwrap() ;
+                    redis::cmd("SET").arg(&sell.room_id).arg(&room).query_async::<_,()>(&mut redis_connection).await.unwrap() ;
                     broadcast_message(&connections, Message::Text(serde_json::to_string::<Sell>(&sell).unwrap()),
                         sell.room_id.clone()
-                        ).await;
+                     ).await;
                     // now we need to add this player to psql database
 
-                    // we need to update the purse in the redis
+                    player_sold(sell.room_id.clone(), sell.player_id, participant_id, sell.amount,&connections.database_connection).await ;
 
                     // we need to  broadcast next player to the specific room
                     broadcast_message(&connections, Message::Text(serde_json::to_string::<Player>(
@@ -248,7 +267,23 @@ async fn handle_ws(mut socket: WebSocket, connections:AppState, room_id: String,
     
 }
 
+async fn send_message_back(tx: UnboundedSender<Message>, message: String) {
+    tx.send(Message::Text(message)) ;
+}
 
+fn bid_allowance(remaining_purse: u32, players_buyed: u32, current_bid: u32) -> bool{ // this allows that every bid will be stopped if the team was not able to buy the min of 18 players
+    if remaining_purse < current_bid { return false }
+    let players_required : i32 = 18 - players_buyed as i32 ;
+    if players_required <= 0  { true } else { // if required players where 0 or less then you can bid
+        let amount_players_required = players_required * 30 ; // assuming 30 lakhs as base price for the min player
+        let remaining_purse_required = remaining_purse as i32 - amount_players_required ;
+        if (remaining_purse as i32 - remaining_purse_required) >= current_bid as i32 {
+            true
+        }else{
+            false
+        }
+    }
+}
 
 
 async fn broadcast_message(
@@ -279,12 +314,6 @@ async fn broadcast_message(
             println!("⚠️ No room_id '{}' exists in the websocket_connections map", room_id);
         }
     }
-}
-
-
-
-async fn create_room(room: Room) -> bool {
-	true
 }
 
 

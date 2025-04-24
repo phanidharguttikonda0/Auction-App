@@ -34,7 +34,8 @@ CREATE TABLE players (
     role VARCHAR(20) NOT NULL,
     capped BOOLEAN NOT NULL,
     stats INT REFERENCES stats(id),
-    pool VARCHAR(1) NOT NULL
+    pool VARCHAR(1) NOT NULL,
+    base_price INT NOT NULL
 );
 
 CREATE TABLE participants (
